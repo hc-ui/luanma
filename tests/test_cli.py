@@ -1,9 +1,11 @@
 import json
 import zipfile
 
+import pytest
+
 from luanma.cli import main
 
-from helpers import make_bad_zip, make_encrypted_zip, make_utf8_zip
+from helpers import make_bad_zip, make_encrypted_zip, make_utf8_zip, mojibake
 
 GBK_NAMES = {
     "期末大作业/实验报告.docx": b"report",
@@ -118,3 +120,80 @@ def test_dest_requires_extract(tmp_path):
 
     with pytest.raises(SystemExit):
         main([str(p), "-d", "somewhere"])
+
+
+def _mojibake_dir(tmp_path):
+    d = tmp_path / "extracted"
+    d.mkdir()
+    (d / mojibake("期末大作业.docx")).write_bytes(b"doc")
+    (d / mojibake("数据分析.xlsx")).write_bytes(b"xls")
+    return d
+
+
+def test_dir_preview_default(tmp_path, capsys):
+    d = _mojibake_dir(tmp_path)
+    assert main([str(d)]) == 0
+    out = capsys.readouterr().out
+    assert "计划重命名" in out
+    assert "期末大作业.docx" in out
+    assert "--rename" in out
+    # dry run: nothing renamed yet
+    assert (d / mojibake("期末大作业.docx")).exists()
+
+
+def test_dir_rename_applies(tmp_path, capsys):
+    d = _mojibake_dir(tmp_path)
+    assert main([str(d), "--rename"]) == 0
+    out = capsys.readouterr().out
+    assert "已重命名 2 项" in out
+    assert (d / "期末大作业.docx").read_bytes() == b"doc"
+    assert (d / "数据分析.xlsx").read_bytes() == b"xls"
+
+
+def test_dir_json_output(tmp_path, capsys):
+    d = _mojibake_dir(tmp_path)
+    assert main([str(d), "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    entry = payload["archives"][0]
+    assert entry["action"] == "dir-preview"
+    news = {i["new"] for i in entry["report"]["planned"]}
+    assert news == {"期末大作业.docx", "数据分析.xlsx"}
+
+
+def test_clean_dir_message(tmp_path, capsys):
+    d = tmp_path / "clean"
+    d.mkdir()
+    (d / "正常文件.txt").write_bytes(b"x")
+    assert main([str(d)]) == 0
+    assert "未发现乱码" in capsys.readouterr().out
+
+
+def test_rename_on_zip_rejected(tmp_path, capsys):
+    p = make_bad_zip(tmp_path / "gbk.zip", GBK_NAMES, "gbk")
+    assert main([str(p), "--rename"]) == 2
+    assert "仅用于目录" in capsys.readouterr().err
+
+
+def test_extract_on_dir_rejected(tmp_path, capsys):
+    d = _mojibake_dir(tmp_path)
+    assert main([str(d), "-x"]) == 2
+    assert "--rename" in capsys.readouterr().err
+
+
+def test_rename_conflicts_with_fix(tmp_path):
+    d = _mojibake_dir(tmp_path)
+    with pytest.raises(SystemExit):
+        main([str(d), "--rename", "--fix"])
+
+
+def test_control_chars_not_echoed(tmp_path, capsys):
+    # A hostile archive name embedding ESC must not reach the terminal.
+    p = make_bad_zip(
+        tmp_path / "evil.zip",
+        {"课程设计说明.txt": b"x"},
+        "gbk",
+        flagged_names={"\x1b]0;pwned\x07.txt": b"y"},
+    )
+    assert main([str(p)]) == 0
+    out = capsys.readouterr().out
+    assert "\x1b" not in out

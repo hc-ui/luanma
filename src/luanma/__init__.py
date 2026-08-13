@@ -4,6 +4,7 @@
 """
 
 from .detect import DetectionResult, detect_names
+from .dirutil import DirReport, RenameItem, rename_dir, scan_dir
 from .ziputil import (
     ArchiveError,
     ConvertReport,
@@ -15,18 +16,22 @@ from .ziputil import (
     preview_zip,
 )
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "ArchiveError",
     "ConvertReport",
     "DetectionResult",
+    "DirReport",
     "EntryPreview",
     "ExtractReport",
+    "RenameItem",
     "convert_zip",
     "detect_names",
     "detect_zip",
     "extract_zip",
     "preview_zip",
+    "rename_dir",
+    "scan_dir",
     "__version__",
 ]

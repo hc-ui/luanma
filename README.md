@@ -3,9 +3,9 @@
 [![CI](https://github.com/hc-ui/luanma/actions/workflows/ci.yml/badge.svg)](https://github.com/hc-ui/luanma/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-**解压后文件名全是乱码?一条命令自动检测编码、预览、修复。**
+**解压后文件名全是乱码?一条命令自动检测编码、预览、修复。已经解压出一堆乱码文件?也能原地改回来。**
 
-Fix mojibake filenames in zip archives: auto-detect the filename encoding (GBK / Big5 / Shift-JIS / EUC-KR / UTF-8), preview the fix, safely extract, or rewrite the archive to standard UTF-8. Pure Python, zero dependencies, works offline.
+Fix mojibake filenames in zip archives — and in directories that were already extracted wrong. Auto-detects the filename encoding (GBK / Big5 / Shift-JIS / EUC-KR / UTF-8), previews the fix, safely extracts, rewrites the archive to standard UTF-8, or renames on-disk files back to their real names. Pure Python, zero dependencies, works offline.
 
 ```text
 之前:                          之后:
@@ -28,7 +28,7 @@ zip 格式诞生时没有规定文件名必须用什么编码。中文 Windows �
 | Python 3.11 `metadata_encoding` | 需要**你自己知道**是什么编码,且只能读不能修 |
 | 网传脚本 `encode('cp437').decode('gbk')` | 只处理 GBK,不防路径穿越,不清垃圾文件 |
 
-`luanma` 把这件事变成一条命令:**自动检测**是 GBK、Big5、Shift-JIS、EUC-KR 还是漏标 flag 的 UTF-8,先给你看修复对照表,再安全解压或直接产出一个人人都能正常打开的 UTF-8 压缩包。
+`luanma` 把这件事变成一条命令:**自动检测**是 GBK、Big5、Shift-JIS、EUC-KR 还是漏标 flag 的 UTF-8,先给你看修复对照表,再安全解压或直接产出一个人人都能正常打开的 UTF-8 压缩包。压缩包早就删了、只剩一目录乱码文件?`--rename` 原地改回来。
 
 ## 安装
 
@@ -58,6 +58,10 @@ luanma bad.zip -e big5 -x
 # 加密压缩包(ZipCrypto)
 luanma bad.zip -x -p 密码
 
+# 4. 已经解压出乱码了?对目录预览重命名计划,确认后 --rename 原地改回
+luanma 乱码目录/
+luanma 乱码目录/ --rename
+
 # 批量处理(自动展开通配符, PowerShell/cmd 下也可用) + 机器可读输出
 luanma *.zip --json
 ```
@@ -65,7 +69,7 @@ luanma *.zip --json
 预览输出示例:
 
 ```text
-bad.zip: 检测到文件名编码 GBK(置信度: 高)
+bad.zip: 检测到文件名编码 GB18030(置信度: 高)
   ÆÚÄ©´ó×÷Òµ/╔ÁÑ╬▒¿.docx
     -> 期末大作业/实验报告.docx
   (另有 2 个系统垃圾文件将被跳过, --keep-junk 可保留)
@@ -75,13 +79,14 @@ bad.zip: 检测到文件名编码 GBK(置信度: 高)
 也可以作为 Python 库使用:
 
 ```python
-from luanma import detect_zip, extract_zip, convert_zip
+from luanma import detect_zip, extract_zip, convert_zip, rename_dir
 
 det = detect_zip("bad.zip")
-print(det.encoding, det.confidence)   # 'gbk' 'high'
+print(det.encoding, det.confidence)   # 'gb18030' 'high'
 
 report = extract_zip("bad.zip", dest="out/")
 report = convert_zip("bad.zip", output="fixed.zip")
+report = rename_dir("乱码目录/", apply=True)   # 修复已解压的目录
 ```
 
 ## 检测原理
@@ -102,12 +107,14 @@ report = convert_zip("bad.zip", output="fixed.zip")
 - **自动跳过系统垃圾**:`__MACOSX/`、`._*`、`.DS_Store`、`Thumbs.db`、`desktop.ini`(`--keep-junk` 可保留)
 - 重名文件自动加 ` (2)` 后缀,不覆盖
 - **Windows 长路径支持**:深层中文目录树超过 260 字符限制时自动用 `\\?\` 前缀写入,不会解压到一半失败
+- **目录重命名默认演习**(dry-run):先看完整计划,加 `--rename` 才动手;疑似乱码但把握不足的名字(如 `café.txt` 这类真欧文文件名)一律跳过不碰
+- **终端输出防转义注入**:压缩包内文件名里的控制字符(如 ESC)显示前会被中和,恶意压缩包无法向你的终端注入转义序列
 
 ## Features (English)
 
-- **Auto-detection.** Scores candidate encodings (GBK, Big5, Shift-JIS, EUC-KR, unflagged UTF-8) against frequency tables of common hanzi and hangul, instead of asking you to guess a code page.
+- **Auto-detection.** Scores candidate encodings (GB18030/GBK, Big5, Shift-JIS, EUC-KR, unflagged UTF-8) against frequency tables of common hanzi and hangul, instead of asking you to guess a code page.
 - **Preview first.** Dry-run by default: see the mojibake-to-fixed name table before anything touches your disk.
-- **Three actions.** Preview, extract with the right encoding, or rewrite the whole archive to standard UTF-8 (flag bit 11 set) so it opens correctly everywhere.
+- **Four actions.** Preview, extract with the right encoding, rewrite the whole archive to standard UTF-8 (flag bit 11 set) — or repair a directory that was already extracted with the wrong encoding (`--rename`), with a plausibility guard so real accented-Latin names like `café.txt` are never touched.
 - **Safe by default.** Zip-slip protection, Windows-illegal-name sanitizing, OS-junk filtering (`__MACOSX`, `.DS_Store`, ...), collision-safe renaming, source archive never modified.
 - **Zero dependencies.** Pure standard library, Python 3.9+. Usable as a CLI and as a library. `--json` output for scripting.
 - **Real-world hardened.** ZipCrypto password support (`-p`), Windows long-path (`\\?\`) handling, glob expansion under PowerShell/cmd, file-vs-directory collision recovery.
@@ -115,6 +122,7 @@ report = convert_zip("bad.zip", output="fixed.zip")
 ## 局限
 
 - 检测是启发式的:文件名极短或没有 CJK 字符时置信度会下降,此时请用 `-e` 手动指定(预览模式会给出候选排序)。
+- 目录模式假定乱码来自最常见的 CP437 回退(`ÆÚÄ©´ó` 这种形态);经由其他错误编码链产生的乱码(如按 Big5 误解 GBK)暂不支持。
 - 加密支持传统 ZipCrypto(最常见);AES 加密的 zip(7-Zip/WinRAR 的可选项)受标准库限制暂不支持,会明确报错。
 - 不支持 rar/7z(这两种格式自带 Unicode 文件名,本身较少出这个问题);tar/tar.gz 支持在路线图中。
 - 只修文件名,不改文件内容——文件内容的乱码是另一个问题。

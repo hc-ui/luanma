@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "luanma"
-version = "0.2.0"
-description = "Fix mojibake filenames in zip archives: auto-detect GBK/Big5/Shift-JIS/EUC-KR, preview, safely extract, or rewrite to UTF-8 | 压缩包乱码文件名自动检测、修复与安全解压工具"
+version = "0.3.0"
+description = "Fix mojibake filenames in zip archives and extracted folders: auto-detect GBK/Big5/Shift-JIS/EUC-KR, preview, safely extract, rewrite to UTF-8, or rename on disk | 压缩包与目录乱码文件名自动检测、修复与安全解压工具"
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
@@ -15,12 +15,15 @@ keywords = [
     "mojibake",
     "encoding",
     "gbk",
+    "gb18030",
     "big5",
     "shift-jis",
+    "cp437",
     "luanma",
     "乱码",
     "unzip",
     "filename",
+    "rename",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",

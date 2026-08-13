@@ -11,6 +11,14 @@ from pathlib import Path
 from typing import Dict, Optional, Union
 
 
+def mojibake(text: str, encoding: str = "gbk") -> str:
+    """The name a naive CP437-fallback tool would create for *text*.
+
+    E.g. ``mojibake("期末")`` returns the familiar ``ÆÚÄ©`` garbage.
+    """
+    return text.encode(encoding).decode("cp437")
+
+
 class _RawNameZipInfo(zipfile.ZipInfo):
     """ZipInfo that writes exact raw name bytes without the UTF-8 flag.
 

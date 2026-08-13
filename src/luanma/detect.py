@@ -28,6 +28,15 @@ CANDIDATES = ("utf-8", "gb18030", "cp932", "big5", "cp949")
 
 _PREFERENCE = {enc: i for i, enc in enumerate(CANDIDATES)}
 
+#: Human-readable confidence labels shared by all report types.
+CONFIDENCE_LABELS = {
+    "high": "高",
+    "medium": "中",
+    "low": "低",
+    "none": "无需修复",
+    "forced": "手动指定",
+}
+
 # High-frequency hanzi (simplified + traditional) plus characters common in
 # file names. Hits on this set are strong evidence the decoding is right;
 # a wrong decoding of CJK bytes yields mostly rare characters instead.
@@ -116,13 +125,7 @@ class DetectionResult:
 
     @property
     def confidence_label(self) -> str:
-        return {
-            "high": "高",
-            "medium": "中",
-            "low": "低",
-            "none": "无需修复",
-            "forced": "手动指定",
-        }.get(self.confidence, self.confidence)
+        return CONFIDENCE_LABELS.get(self.confidence, self.confidence)
 
     def ranked(self) -> List[str]:
         """Candidate encodings sorted from best to worst score."""
@@ -159,9 +162,11 @@ def detect_names(raw_names: Sequence[bytes]) -> DetectionResult:
     total_bytes = sum(len(raw) for raw in non_ascii) or 1
     per_byte = scores[best] / total_bytes
 
+    # 0.4 per byte keeps names that mix ASCII (extensions, dates, "v2")
+    # with CJK text in the "high" bucket while random decodes stay out.
     if scores[best] <= 0:
         confidence = "low"
-    elif margin / max(abs(scores[best]), 1.0) >= 0.25 and per_byte >= 0.5:
+    elif margin / max(abs(scores[best]), 1.0) >= 0.25 and per_byte >= 0.4:
         confidence = "high"
     elif margin > 0:
         confidence = "medium"

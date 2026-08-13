@@ -25,15 +25,19 @@ class ArchiveError(Exception):
     """Raised when an archive cannot be opened or processed."""
 
 
-def _fs_path(p: Path) -> str:
+def _fs_path(p) -> str:
     """Filesystem path string, with Windows long-path prefix when needed.
 
     Classic Windows APIs cap paths at 260 characters; deep directory trees
-    with CJK names hit that easily. The ``\\\\?\\`` prefix lifts the limit.
+    with CJK names hit that easily. The ``\\\\?\\`` prefix lifts the limit
+    (UNC shares need the ``\\\\?\\UNC\\server\\share`` spelling).
     """
     s = str(p)
     if os.name == "nt" and len(s) >= 248 and not s.startswith("\\\\?\\"):
-        return "\\\\?\\" + os.path.abspath(s)
+        s = os.path.abspath(s)
+        if s.startswith("\\\\"):
+            return "\\\\?\\UNC" + s[1:]
+        return "\\\\?\\" + s
     return s
 
 
@@ -217,7 +221,7 @@ def extract_zip(
     dest_dir = Path(dest) if dest is not None else src.parent / src.stem
     pwd = password.encode("utf-8") if password else None
     with _open(src) as zf:
-        det, enc = _resolve_encoding(zf, encoding)
+        _, enc = _resolve_encoding(zf, encoding)
         report = ExtractReport(dest=str(dest_dir), encoding=enc)
         dest_root = dest_dir.resolve()
         os.makedirs(_fs_path(dest_dir), exist_ok=True)
@@ -232,7 +236,8 @@ def extract_zip(
             if not keep_junk and is_junk(components):
                 report.junk_skipped += 1
                 continue
-            if info.flag_bits & ENCRYPTED_FLAG and pwd is None:
+            encrypted = info.flag_bits & ENCRYPTED_FLAG and not info.is_dir()
+            if encrypted and pwd is None:
                 report.errors.append(f"{fixed}: 已加密, 请用 -p 提供密码")
                 continue
 
@@ -310,7 +315,7 @@ def convert_zip(
     pwd = password.encode("utf-8") if password else None
 
     with _open(src) as zf:
-        det, enc = _resolve_encoding(zf, encoding)
+        _, enc = _resolve_encoding(zf, encoding)
         report = ConvertReport(output=str(out), encoding=enc)
         used_names: set = set()
         with zipfile.ZipFile(out, "w") as out_zf:
@@ -323,17 +328,23 @@ def convert_zip(
                 if not keep_junk and is_junk(components):
                     report.junk_skipped += 1
                     continue
-                if info.flag_bits & ENCRYPTED_FLAG and pwd is None:
+                encrypted = (
+                    info.flag_bits & ENCRYPTED_FLAG and not info.is_dir()
+                )
+                if encrypted and pwd is None:
                     report.errors.append(f"{fixed}: 已加密, 请用 -p 提供密码")
                     continue
 
                 name = _dedupe_name(components, info.is_dir(), used_names)
 
                 new_info = zipfile.ZipInfo(name, date_time=info.date_time)
-                new_info.compress_type = info.compress_type
+                new_info.compress_type = (
+                    zipfile.ZIP_STORED if info.is_dir() else info.compress_type
+                )
                 new_info.external_attr = info.external_attr
                 new_info.internal_attr = info.internal_attr
                 new_info.create_system = info.create_system
+                new_info.comment = info.comment
                 try:
                     if info.is_dir():
                         out_zf.writestr(new_info, b"")
