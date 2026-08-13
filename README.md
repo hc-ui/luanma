@@ -1,8 +1,6 @@
 # luanma(乱码)
 
 [![CI](https://github.com/hc-ui/luanma/actions/workflows/ci.yml/badge.svg)](https://github.com/hc-ui/luanma/actions/workflows/ci.yml)
-[![PyPI](https://img.shields.io/pypi/v/luanma)](https://pypi.org/project/luanma/)
-[![Python](https://img.shields.io/pypi/pyversions/luanma)](https://pypi.org/project/luanma/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 **解压后文件名全是乱码?一条命令自动检测编码、预览、修复。**
@@ -35,10 +33,10 @@ zip 格式诞生时没有规定文件名必须用什么编码。中文 Windows �
 ## 安装
 
 ```bash
-pip install luanma
+pip install git+https://github.com/hc-ui/luanma.git
 ```
 
-零第三方依赖,Python 3.9+,Windows / macOS / Linux 通用。
+零第三方依赖,Python 3.9+,Windows / macOS / Linux 通用。（PyPI 包名 `luanma` 上架中，上架后可直接 `pip install luanma`。）
 
 ## 使用
 
