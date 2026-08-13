@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "luanma"
-version = "0.1.0"
+version = "0.2.0"
 description = "Fix mojibake filenames in zip archives: auto-detect GBK/Big5/Shift-JIS/EUC-KR, preview, safely extract, or rewrite to UTF-8 | 压缩包乱码文件名自动检测、修复与安全解压工具"
 readme = "README.md"
 requires-python = ">=3.9"

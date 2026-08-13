@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import glob
 import json
 import sys
 from typing import List, Optional
@@ -38,6 +39,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("-d", "--dest", help="解压目标目录(配合 -x)")
     parser.add_argument(
         "-o", "--output", help="输出压缩包路径(配合 --fix, 仅限单个输入)"
+    )
+    parser.add_argument(
+        "-p", "--password", help="加密压缩包的密码(ZipCrypto)"
     )
     parser.add_argument(
         "--keep-junk",
@@ -95,7 +99,7 @@ def _run_one(path: str, args) -> dict:
     if args.extract:
         report = extract_zip(
             path, dest=args.dest, encoding=args.encoding,
-            keep_junk=args.keep_junk,
+            keep_junk=args.keep_junk, password=args.password,
         )
         entry["action"] = "extract"
         entry["report"] = report.to_dict()
@@ -111,7 +115,7 @@ def _run_one(path: str, args) -> dict:
     elif args.fix:
         report = convert_zip(
             path, output=args.output, encoding=args.encoding,
-            keep_junk=args.keep_junk,
+            keep_junk=args.keep_junk, password=args.password,
         )
         entry["action"] = "convert"
         entry["report"] = report.to_dict()
@@ -130,6 +134,21 @@ def _run_one(path: str, args) -> dict:
     return entry
 
 
+def _expand_archives(patterns: List[str]) -> List[str]:
+    """Expand glob patterns ourselves: PowerShell/cmd do not expand ``*``."""
+    paths: List[str] = []
+    for pattern in patterns:
+        if any(ch in pattern for ch in "*?[") :
+            matches = sorted(glob.glob(pattern))
+            if matches:
+                paths.extend(matches)
+            else:
+                paths.append(pattern)  # keep it: reported as missing later
+        else:
+            paths.append(pattern)
+    return paths
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     if hasattr(sys.stdout, "reconfigure"):
         try:
@@ -142,19 +161,29 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if args.extract and args.fix:
         parser.error("-x 与 --fix 不能同时使用")
-    if args.output and len(args.archives) > 1:
-        parser.error("-o 只能用于单个压缩包")
+    if args.dest and not args.extract:
+        parser.error("-d 需要配合 -x 使用")
+    if args.output and not args.fix:
+        parser.error("-o 需要配合 --fix 使用")
     if args.encoding:
         try:
             "".encode(args.encoding)
         except LookupError:
             parser.error(f"未知编码: {args.encoding}")
 
+    archives = _expand_archives(args.archives)
+    if args.output and len(archives) > 1:
+        parser.error("-o 只能用于单个压缩包")
+
     results = []
     failed = False
-    for path in args.archives:
+    partial = False
+    for path in archives:
         try:
-            results.append(_run_one(path, args))
+            entry = _run_one(path, args)
+            results.append(entry)
+            if entry.get("report", {}).get("errors"):
+                partial = True
         except ArchiveError as exc:
             failed = True
             if args.json:
@@ -164,7 +193,9 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if args.json:
         print(json.dumps({"archives": results}, ensure_ascii=False, indent=2))
-    return 2 if failed else 0
+    if failed:
+        return 2
+    return 1 if partial else 0
 
 
 if __name__ == "__main__":  # pragma: no cover

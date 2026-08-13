@@ -32,8 +32,16 @@ def test_detect_gbk(tmp_path):
     p = make_bad_zip(tmp_path / "gbk.zip", GBK_NAMES, "gbk")
     det = detect_zip(p)
     assert det.needs_fix
-    assert det.encoding == "gbk"
+    assert det.encoding == "gb18030"  # superset of GBK
     assert det.confidence == "high"
+
+
+def test_detect_gb18030_four_byte_char(tmp_path):
+    p = make_bad_zip(
+        tmp_path / "g4.zip", {"文档㐀备份.txt": b"x"}, "gb18030"
+    )
+    det = detect_zip(p)
+    assert det.encoding == "gb18030"
 
 
 def test_detect_big5(tmp_path):
@@ -90,7 +98,7 @@ def test_mixed_archive_detects_from_unflagged_only(tmp_path):
         flagged_names={"已经正常的文件.txt": b"ok"},
     )
     det = detect_zip(p)
-    assert det.encoding == "gbk"
+    assert det.encoding == "gb18030"
 
 
 def test_detect_names_empty():
@@ -102,4 +110,4 @@ def test_detect_names_empty():
 def test_ranked_orders_by_score(tmp_path):
     p = make_bad_zip(tmp_path / "gbk2.zip", GBK_NAMES, "gbk")
     det = detect_zip(p)
-    assert det.ranked()[0] == "gbk"
+    assert det.ranked()[0] == "gb18030"

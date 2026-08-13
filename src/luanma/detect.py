@@ -21,8 +21,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence
 
-#: Candidate encodings, also the tie-break preference order.
-CANDIDATES = ("utf-8", "gbk", "cp932", "big5", "cp949")
+#: Candidate encodings, also the tie-break preference order. GB18030 is a
+#: strict superset of GBK/GB2312, so it decodes everything GBK archives
+#: contain plus rarer characters that plain GBK would reject.
+CANDIDATES = ("utf-8", "gb18030", "cp932", "big5", "cp949")
 
 _PREFERENCE = {enc: i for i, enc in enumerate(CANDIDATES)}
 
@@ -81,8 +83,8 @@ def _score_text(text: str, encoding: str) -> float:
         o = ord(ch)
         if ch in _COMMON_HANZI or ch in _COMMON_HANGUL:
             score += 3.0
-        elif 0x4E00 <= o <= 0x9FFF:  # CJK ideograph, but not a common one
-            score += 0.5
+        elif 0x4E00 <= o <= 0x9FFF or 0x3400 <= o <= 0x4DBF:
+            score += 0.5  # CJK ideograph (incl. Ext-A), not a common one
         elif 0x3040 <= o <= 0x30FF:  # kana: strong signal by itself
             score += 2.0
         elif 0xAC00 <= o <= 0xD7A3:  # hangul, but not a common syllable

@@ -3,7 +3,7 @@ import zipfile
 from luanma import convert_zip, extract_zip, preview_zip
 from luanma.ziputil import UTF8_FLAG
 
-from helpers import make_bad_zip, make_utf8_zip
+from helpers import make_bad_zip, make_encrypted_zip, make_utf8_zip
 
 GBK_NAMES = {
     "期末大作业/": b"",
@@ -154,6 +154,85 @@ def test_convert_utf8_archive_roundtrip(tmp_path):
     report = convert_zip(p, output=tmp_path / "out.zip")
     with zipfile.ZipFile(report.output) as zf:
         assert zf.namelist() == ["中文文档.txt"]
+
+
+def test_file_directory_collision_survives(tmp_path):
+    # A file named X plus a path X/y.txt would crash a naive extractor.
+    p = make_bad_zip(
+        tmp_path / "odd.zip",
+        {"报告": b"file-content", "报告/内容.txt": b"nested"},
+        "gbk",
+    )
+    report = extract_zip(p, dest=tmp_path / "out")
+    assert report.extracted + len(report.errors) == 2
+    assert report.errors  # the impossible one is reported, not raised
+
+
+def test_long_paths_extract(tmp_path):
+    import os
+
+    from luanma.ziputil import _fs_path
+
+    part = "很长的中文目录名" * 8
+    deep = "/".join([part] * 4) + "/说明文档.txt"
+    p = make_bad_zip(tmp_path / "deep.zip", {deep: b"deep"}, "gbk")
+    report = extract_zip(p, dest=tmp_path / "out")
+    assert report.extracted == 1
+    assert not report.errors
+    # Plain APIs may not see >260-char paths on Windows; verify with the
+    # same long-path-aware helper the extractor uses.
+    expected = tmp_path / "out" / part / part / part / part / "说明文档.txt"
+    assert os.path.exists(_fs_path(expected))
+
+
+def test_encrypted_without_password_reported(tmp_path):
+    p = make_encrypted_zip(
+        tmp_path / "enc.zip", "机密资料.txt", b"secret", "pass123"
+    )
+    report = extract_zip(p, dest=tmp_path / "out")
+    assert report.extracted == 0
+    assert any("已加密" in e for e in report.errors)
+
+
+def test_encrypted_with_password_extracts(tmp_path):
+    p = make_encrypted_zip(
+        tmp_path / "enc.zip", "机密资料.txt", b"secret-data", "pass123"
+    )
+    report = extract_zip(p, dest=tmp_path / "out", password="pass123")
+    assert report.extracted == 1
+    assert not report.errors
+    assert (tmp_path / "out" / "机密资料.txt").read_bytes() == b"secret-data"
+
+
+def test_encrypted_wrong_password_reported(tmp_path):
+    p = make_encrypted_zip(
+        tmp_path / "enc.zip", "机密资料.txt", b"secret", "pass123"
+    )
+    report = extract_zip(p, dest=tmp_path / "out", password="wrong")
+    assert report.extracted == 0
+    assert report.errors
+
+
+def test_convert_decrypts_with_password(tmp_path):
+    p = make_encrypted_zip(
+        tmp_path / "enc.zip", "机密资料.txt", b"secret-data", "pass123"
+    )
+    report = convert_zip(p, output=tmp_path / "plain.zip", password="pass123")
+    assert report.converted == 1
+    with zipfile.ZipFile(tmp_path / "plain.zip") as zf:
+        assert zf.read("机密资料.txt") == b"secret-data"
+        assert not zf.infolist()[0].flag_bits & 0x1  # no longer encrypted
+
+
+def test_convert_collision_gets_counter(tmp_path):
+    p = make_bad_zip(
+        tmp_path / "dup.zip",
+        {"报告?.txt": b"one", "报告*.txt": b"two"},
+        "gbk",
+    )
+    report = convert_zip(p, output=tmp_path / "out.zip")
+    with zipfile.ZipFile(tmp_path / "out.zip") as zf:
+        assert sorted(zf.namelist()) == ["报告_ (2).txt", "报告_.txt"]
 
 
 def test_missing_file_raises(tmp_path):

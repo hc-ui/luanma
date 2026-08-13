@@ -57,7 +57,10 @@ luanma bad.zip --fix -o fixed.zip
 # 自动检测不对时,手动指定编码
 luanma bad.zip -e big5 -x
 
-# 批量处理 + 机器可读输出
+# 加密压缩包(ZipCrypto)
+luanma bad.zip -x -p 密码
+
+# 批量处理(自动展开通配符, PowerShell/cmd 下也可用) + 机器可读输出
 luanma *.zip --json
 ```
 
@@ -85,7 +88,7 @@ report = convert_zip("bad.zip", output="fixed.zip")
 
 ## 检测原理
 
-对每个未标 UTF-8 flag 的文件名,取出原始字节,分别用候选编码(UTF-8、GBK、Shift-JIS、Big5、EUC-KR)试解码,再给解码结果打分:
+对每个未标 UTF-8 flag 的文件名,取出原始字节,分别用候选编码(UTF-8、GB18030(GBK 超集)、Shift-JIS、Big5、EUC-KR)试解码,再给解码结果打分:
 
 - 命中**高频汉字表**(简体+繁体,约 900 字)或**高频韩文音节表**得高分——错误的编码解出来的多是生僻字,得分很低
 - 假名是 Shift-JIS 的强信号;半角片假名(`ｱｲｳ` 这种经典乱码形态)在非日文编码下扣分
@@ -100,6 +103,7 @@ report = convert_zip("bad.zip", output="fixed.zip")
 - **Windows 非法文件名自动清洗**:`< > : " | ? *`、保留设备名(`CON`、`LPT1`)、结尾空格/点
 - **自动跳过系统垃圾**:`__MACOSX/`、`._*`、`.DS_Store`、`Thumbs.db`、`desktop.ini`(`--keep-junk` 可保留)
 - 重名文件自动加 ` (2)` 后缀,不覆盖
+- **Windows 长路径支持**:深层中文目录树超过 260 字符限制时自动用 `\\?\` 前缀写入,不会解压到一半失败
 
 ## Features (English)
 
@@ -108,11 +112,13 @@ report = convert_zip("bad.zip", output="fixed.zip")
 - **Three actions.** Preview, extract with the right encoding, or rewrite the whole archive to standard UTF-8 (flag bit 11 set) so it opens correctly everywhere.
 - **Safe by default.** Zip-slip protection, Windows-illegal-name sanitizing, OS-junk filtering (`__MACOSX`, `.DS_Store`, ...), collision-safe renaming, source archive never modified.
 - **Zero dependencies.** Pure standard library, Python 3.9+. Usable as a CLI and as a library. `--json` output for scripting.
+- **Real-world hardened.** ZipCrypto password support (`-p`), Windows long-path (`\\?\`) handling, glob expansion under PowerShell/cmd, file-vs-directory collision recovery.
 
 ## 局限
 
 - 检测是启发式的:文件名极短或没有 CJK 字符时置信度会下降,此时请用 `-e` 手动指定(预览模式会给出候选排序)。
-- 暂不支持加密 zip 与 rar/7z(rar/7z 格式自带 Unicode 文件名,本身较少出这个问题);tar/tar.gz 支持在路线图中。
+- 加密支持传统 ZipCrypto(最常见);AES 加密的 zip(7-Zip/WinRAR 的可选项)受标准库限制暂不支持,会明确报错。
+- 不支持 rar/7z(这两种格式自带 Unicode 文件名,本身较少出这个问题);tar/tar.gz 支持在路线图中。
 - 只修文件名,不改文件内容——文件内容的乱码是另一个问题。
 
 ## 姊妹项目

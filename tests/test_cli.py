@@ -3,7 +3,7 @@ import zipfile
 
 from luanma.cli import main
 
-from helpers import make_bad_zip, make_utf8_zip
+from helpers import make_bad_zip, make_encrypted_zip, make_utf8_zip
 
 GBK_NAMES = {
     "期末大作业/实验报告.docx": b"report",
@@ -15,7 +15,7 @@ def test_preview_default(tmp_path, capsys):
     p = make_bad_zip(tmp_path / "gbk.zip", GBK_NAMES, "gbk")
     assert main([str(p)]) == 0
     out = capsys.readouterr().out
-    assert "GBK" in out
+    assert "GB18030" in out
     assert "课程设计说明.txt" in out
 
 
@@ -30,7 +30,7 @@ def test_json_output(tmp_path, capsys):
     assert main([str(p), "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
     archive = payload["archives"][0]
-    assert archive["encoding"] == "gbk"
+    assert archive["encoding"] == "gb18030"
     assert archive["needs_fix"] is True
     assert any(
         e["fixed"] == "课程设计说明.txt" for e in archive["entries"]
@@ -84,3 +84,37 @@ def test_extract_and_fix_conflict(tmp_path):
 
     with pytest.raises(SystemExit):
         main([str(p), "-x", "--fix"])
+
+
+def test_glob_expansion(tmp_path, capsys):
+    # PowerShell and cmd pass "*.zip" through literally; we must expand it.
+    make_bad_zip(tmp_path / "a.zip", GBK_NAMES, "gbk")
+    make_bad_zip(tmp_path / "b.zip", GBK_NAMES, "gbk")
+    assert main([str(tmp_path / "*.zip")]) == 0
+    out = capsys.readouterr().out
+    assert "a.zip" in out and "b.zip" in out
+
+
+def test_encrypted_without_password_exit_code(tmp_path, capsys):
+    p = make_encrypted_zip(
+        tmp_path / "enc.zip", "机密.txt", b"secret", "pw"
+    )
+    assert main([str(p), "-x", "-d", str(tmp_path / "out")]) == 1
+    assert "已加密" in capsys.readouterr().out
+
+
+def test_password_flag(tmp_path, capsys):
+    p = make_encrypted_zip(
+        tmp_path / "enc.zip", "机密.txt", b"secret", "pw"
+    )
+    dest = tmp_path / "out"
+    assert main([str(p), "-x", "-d", str(dest), "-p", "pw"]) == 0
+    assert (dest / "机密.txt").read_bytes() == b"secret"
+
+
+def test_dest_requires_extract(tmp_path):
+    p = make_bad_zip(tmp_path / "gbk.zip", GBK_NAMES, "gbk")
+    import pytest
+
+    with pytest.raises(SystemExit):
+        main([str(p), "-d", "somewhere"])
