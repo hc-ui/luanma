@@ -25,7 +25,7 @@ class _RawNameZipInfo(zipfile.ZipInfo):
     This reproduces archives produced by legacy tools (WinRAR on Chinese
     Windows, old Java, Baidu Netdisk, ...) that store local-code-page bytes.
     Relies on the private ``_encodeFilenameFlags`` hook, which is stable
-    across CPython 3.9-3.13; if it changes, these tests fail loudly.
+    across CPython 3.9-3.14; if it changes, these tests fail loudly.
     """
 
     raw_name: bytes = b""

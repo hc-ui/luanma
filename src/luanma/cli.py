@@ -98,8 +98,11 @@ def _shorten(text: str, width: int = 58) -> str:
 
 
 def _print_preview(path: str, det, previews) -> None:
+    encrypted = sum(1 for p in previews if p.encrypted)
     if not det.needs_fix:
         print(f"{path}: 文件名编码正常(UTF-8/ASCII), 无需修复")
+        if encrypted:
+            print(f"  (含 {encrypted} 个加密条目, 解压需 -p 提供密码)")
         return
     print(
         f"{path}: 检测到文件名编码 {det.encoding.upper()}"
@@ -118,6 +121,8 @@ def _print_preview(path: str, det, previews) -> None:
             print(f"    -> {_shorten(p.fixed)}")
     if junk:
         print(f"  (另有 {junk} 个系统垃圾文件将被跳过, --keep-junk 可保留)")
+    if encrypted:
+        print(f"  (含 {encrypted} 个加密条目, 解压/转换需 -p 提供密码)")
     print(
         "提示: 加 -x 按此编码解压, 或加 --fix 生成 UTF-8 压缩包; "
         "-e <编码> 可手动指定"
@@ -159,6 +164,8 @@ def _run_dir(path: str, args) -> dict:
         )
     for err in report.errors:
         print(f"  警告: {_display(err)}")
+    if report.new_root:
+        print(f"  目录本身已改名: {report.new_root}")
     if report.planned and not args.rename:
         print("提示: 确认无误后加 --rename 实际重命名")
     return entry

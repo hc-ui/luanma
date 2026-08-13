@@ -10,7 +10,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-from .detect import DetectionResult, detect_names
+from .detect import (
+    MIN_NAME_SCORE,
+    DetectionResult,
+    _score_text,
+    cp437_roundtrip,
+    detect_names,
+)
 from .junk import is_junk
 from .sanitize import safe_components
 
@@ -50,6 +56,7 @@ class EntryPreview:
     is_dir: bool
     is_junk: bool
     flagged_utf8: bool  # True when the entry already carried the UTF-8 flag
+    encrypted: bool = False
 
     @property
     def needs_fix(self) -> bool:
@@ -62,6 +69,7 @@ class EntryPreview:
             "dir": self.is_dir,
             "junk": self.is_junk,
             "utf8_flagged": self.flagged_utf8,
+            "encrypted": self.encrypted,
         }
 
 
@@ -107,12 +115,14 @@ class ConvertReport:
 
 def _open(path) -> zipfile.ZipFile:
     p = Path(path)
-    if not p.is_file():
+    if not os.path.isfile(_fs_path(p)):
         raise ArchiveError(f"文件不存在: {p}")
     try:
-        return zipfile.ZipFile(p)
+        return zipfile.ZipFile(_fs_path(p))
     except zipfile.BadZipFile as exc:
         raise ArchiveError(f"不是有效的 zip 文件: {p} ({exc})") from exc
+    except OSError as exc:
+        raise ArchiveError(f"无法读取 {p}: {exc}") from exc
 
 
 def _is_flagged(info: zipfile.ZipInfo) -> bool:
@@ -130,37 +140,78 @@ def _raw_name(info: zipfile.ZipInfo) -> bytes:
     return info.filename.encode("cp437")
 
 
-def _decode_name(info: zipfile.ZipInfo, encoding: Optional[str]) -> str:
-    if _is_flagged(info) or encoding is None:
+def _decode_name(
+    info: zipfile.ZipInfo,
+    encoding: Optional[str],
+    fix_flagged: bool = False,
+) -> str:
+    if encoding is None:
         return info.filename
+    if _is_flagged(info):
+        # "Double mojibake": a wrecked tree re-zipped with a modern tool
+        # stores mojibake *text* with the UTF-8 flag set. Only re-interpret
+        # such names when detection was confident, and guard each name so a
+        # legitimate "café.txt" is never mangled.
+        if not fix_flagged:
+            return info.filename
+        raw = cp437_roundtrip(info.filename)
+        if raw is None:
+            return info.filename
+        decoded = raw.decode(encoding, errors="replace")
+        if _score_text(decoded, encoding) < MIN_NAME_SCORE:
+            return info.filename
+        return decoded
     return _raw_name(info).decode(encoding, errors="replace")
 
 
 def detect_zip(path) -> DetectionResult:
     """Detect the filename encoding used by a zip archive."""
     with _open(path) as zf:
-        raws = [_raw_name(i) for i in zf.infolist() if not _is_flagged(i)]
-    return detect_names(raws)
+        det, _, _ = _resolve_encoding(zf, None)
+    return det
 
 
 def _resolve_encoding(
     zf: zipfile.ZipFile, encoding: Optional[str]
-) -> Tuple[DetectionResult, Optional[str]]:
+) -> Tuple[DetectionResult, Optional[str], bool]:
+    """Choose the working encoding.
+
+    Returns ``(detection, encoding_or_None, fix_flagged)``. ``fix_flagged``
+    is True when UTF-8-flagged names should also be re-interpreted, i.e.
+    the archive is a re-zipped mojibake tree (or the user forced an
+    encoding and there is nothing unflagged left to fix).
+    """
+    infos = zf.infolist()
+    unflagged = [_raw_name(i) for i in infos if not _is_flagged(i)]
+    has_unflagged_bytes = any(
+        any(b >= 0x80 for b in raw) for raw in unflagged
+    )
     if encoding is not None:
         "".encode(encoding)  # validate early; raises LookupError if unknown
         det = DetectionResult(encoding, "forced", True)
-        return det, encoding
-    raws = [_raw_name(i) for i in zf.infolist() if not _is_flagged(i)]
-    det = detect_names(raws)
-    return det, det.encoding if det.needs_fix else None
+        return det, encoding, not has_unflagged_bytes
+    if has_unflagged_bytes:
+        det = detect_names(unflagged)
+        return det, det.encoding if det.needs_fix else None, False
+    flagged_raws = [
+        raw
+        for i in infos
+        if _is_flagged(i)
+        and (raw := cp437_roundtrip(i.filename)) is not None
+    ]
+    if flagged_raws:
+        det = detect_names(flagged_raws)
+        if det.needs_fix and det.confidence == "high":
+            return det, det.encoding, True
+    return DetectionResult("utf-8", "none", False), None, False
 
 
 def _previews(
-    zf: zipfile.ZipFile, encoding: Optional[str]
+    zf: zipfile.ZipFile, encoding: Optional[str], fix_flagged: bool = False
 ) -> List[EntryPreview]:
     previews = []
     for info in zf.infolist():
-        fixed = _decode_name(info, encoding)
+        fixed = _decode_name(info, encoding, fix_flagged)
         components, _ = safe_components(fixed)
         previews.append(
             EntryPreview(
@@ -169,6 +220,8 @@ def _previews(
                 is_dir=info.is_dir(),
                 is_junk=is_junk(components),
                 flagged_utf8=_is_flagged(info),
+                encrypted=bool(info.flag_bits & ENCRYPTED_FLAG)
+                and not info.is_dir(),
             )
         )
     return previews
@@ -179,8 +232,8 @@ def preview_zip(
 ) -> Tuple[DetectionResult, List[EntryPreview]]:
     """Detect encoding and return the before/after name table. Reads only."""
     with _open(path) as zf:
-        det, enc = _resolve_encoding(zf, encoding)
-        return det, _previews(zf, enc)
+        det, enc, fix_flagged = _resolve_encoding(zf, encoding)
+        return det, _previews(zf, enc, fix_flagged)
 
 
 def _unique_path(target: Path) -> Tuple[Path, bool]:
@@ -221,13 +274,16 @@ def extract_zip(
     dest_dir = Path(dest) if dest is not None else src.parent / src.stem
     pwd = password.encode("utf-8") if password else None
     with _open(src) as zf:
-        _, enc = _resolve_encoding(zf, encoding)
+        _, enc, fix_flagged = _resolve_encoding(zf, encoding)
         report = ExtractReport(dest=str(dest_dir), encoding=enc)
         dest_root = dest_dir.resolve()
-        os.makedirs(_fs_path(dest_dir), exist_ok=True)
+        try:
+            os.makedirs(_fs_path(dest_dir), exist_ok=True)
+        except OSError as exc:
+            raise ArchiveError(f"无法创建目标目录 {dest_dir}: {exc}") from exc
 
         for info in zf.infolist():
-            fixed = _decode_name(info, enc)
+            fixed = _decode_name(info, enc, fix_flagged)
             components, changed = safe_components(fixed)
             if not components:
                 continue
@@ -313,47 +369,70 @@ def convert_zip(
     if out.resolve() == src.resolve():
         raise ArchiveError("输出文件不能与源文件相同")
     pwd = password.encode("utf-8") if password else None
+    # Write to a temp file and swap in at the end: an interrupted run must
+    # not leave a half-written archive that looks finished.
+    tmp = out.with_name(out.name + ".part")
 
     with _open(src) as zf:
-        _, enc = _resolve_encoding(zf, encoding)
+        _, enc, fix_flagged = _resolve_encoding(zf, encoding)
         report = ConvertReport(output=str(out), encoding=enc)
         used_names: set = set()
-        with zipfile.ZipFile(out, "w") as out_zf:
-            out_zf.comment = zf.comment
-            for info in zf.infolist():
-                fixed = _decode_name(info, enc)
-                components, _ = safe_components(fixed)
-                if not components:
-                    continue
-                if not keep_junk and is_junk(components):
-                    report.junk_skipped += 1
-                    continue
-                encrypted = (
-                    info.flag_bits & ENCRYPTED_FLAG and not info.is_dir()
-                )
-                if encrypted and pwd is None:
-                    report.errors.append(f"{fixed}: 已加密, 请用 -p 提供密码")
-                    continue
+        try:
+            try:
+                out_zf = zipfile.ZipFile(_fs_path(tmp), "w")
+            except OSError as exc:
+                raise ArchiveError(f"无法写入输出文件 {out}: {exc}") from exc
+            with out_zf:
+                out_zf.comment = zf.comment
+                for info in zf.infolist():
+                    fixed = _decode_name(info, enc, fix_flagged)
+                    components, _ = safe_components(fixed)
+                    if not components:
+                        continue
+                    if not keep_junk and is_junk(components):
+                        report.junk_skipped += 1
+                        continue
+                    encrypted = (
+                        info.flag_bits & ENCRYPTED_FLAG and not info.is_dir()
+                    )
+                    if encrypted and pwd is None:
+                        report.errors.append(
+                            f"{fixed}: 已加密, 请用 -p 提供密码"
+                        )
+                        continue
 
-                name = _dedupe_name(components, info.is_dir(), used_names)
+                    name = _dedupe_name(components, info.is_dir(), used_names)
 
-                new_info = zipfile.ZipInfo(name, date_time=info.date_time)
-                new_info.compress_type = (
-                    zipfile.ZIP_STORED if info.is_dir() else info.compress_type
-                )
-                new_info.external_attr = info.external_attr
-                new_info.internal_attr = info.internal_attr
-                new_info.create_system = info.create_system
-                new_info.comment = info.comment
-                try:
-                    if info.is_dir():
-                        out_zf.writestr(new_info, b"")
-                    else:
-                        with zf.open(info, pwd=pwd) as src_f:
-                            with out_zf.open(new_info, "w") as dst_f:
-                                shutil.copyfileobj(src_f, dst_f)
-                except (NotImplementedError, RuntimeError, OSError) as exc:
-                    report.errors.append(f"{fixed}: {exc}")
-                    continue
-                report.converted += 1
+                    new_info = zipfile.ZipInfo(
+                        name, date_time=info.date_time
+                    )
+                    new_info.compress_type = (
+                        zipfile.ZIP_STORED
+                        if info.is_dir()
+                        else info.compress_type
+                    )
+                    new_info.external_attr = info.external_attr
+                    new_info.internal_attr = info.internal_attr
+                    new_info.create_system = info.create_system
+                    new_info.comment = info.comment
+                    try:
+                        if info.is_dir():
+                            out_zf.writestr(new_info, b"")
+                        else:
+                            with zf.open(info, pwd=pwd) as src_f:
+                                with out_zf.open(new_info, "w") as dst_f:
+                                    shutil.copyfileobj(src_f, dst_f)
+                    except (
+                        NotImplementedError, RuntimeError, OSError
+                    ) as exc:
+                        report.errors.append(f"{fixed}: {exc}")
+                        continue
+                    report.converted += 1
+            os.replace(_fs_path(tmp), _fs_path(out))
+        except BaseException:
+            try:
+                os.unlink(_fs_path(tmp))
+            except OSError:
+                pass
+            raise
     return report

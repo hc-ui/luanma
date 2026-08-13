@@ -186,6 +186,51 @@ def test_rename_conflicts_with_fix(tmp_path):
         main([str(d), "--rename", "--fix"])
 
 
+def test_fix_output_missing_dir_exit2(tmp_path, capsys):
+    p = make_bad_zip(tmp_path / "gbk.zip", GBK_NAMES, "gbk")
+    out = tmp_path / "no_such_dir" / "o.zip"
+    assert main([str(p), "--fix", "-o", str(out)]) == 2
+    assert "无法写入" in capsys.readouterr().err
+
+
+def test_extract_dest_under_file_exit2(tmp_path, capsys):
+    p = make_bad_zip(tmp_path / "gbk.zip", GBK_NAMES, "gbk")
+    blocker = tmp_path / "blocker"
+    blocker.write_bytes(b"file")
+    assert main([str(p), "-x", "-d", str(blocker / "sub")]) == 2
+    assert "无法创建目标目录" in capsys.readouterr().err
+
+
+def test_preview_shows_encrypted_hint(tmp_path, capsys):
+    p = make_encrypted_zip(
+        tmp_path / "enc.zip", "机密资料.txt", b"secret", "pw"
+    )
+    assert main([str(p)]) == 0
+    assert "加密条目" in capsys.readouterr().out
+
+
+def test_rezipped_double_mojibake_end_to_end(tmp_path, capsys):
+    names = {
+        mojibake("期末大作业.docx"): b"d",
+        mojibake("数据分析.xlsx"): b"x",
+    }
+    p = make_utf8_zip(tmp_path / "re.zip", names)
+    dest = tmp_path / "out"
+    assert main([str(p), "-x", "-d", str(dest)]) == 0
+    assert (dest / "期末大作业.docx").read_bytes() == b"d"
+    assert (dest / "数据分析.xlsx").read_bytes() == b"x"
+
+
+def test_dir_root_renamed_cli(tmp_path, capsys):
+    wreck = tmp_path / mojibake("学习资料")
+    wreck.mkdir()
+    (wreck / mojibake("课堂笔记.txt")).write_bytes(b"n")
+    assert main([str(wreck), "--rename"]) == 0
+    out = capsys.readouterr().out
+    assert "目录本身已改名" in out
+    assert (tmp_path / "学习资料" / "课堂笔记.txt").exists()
+
+
 def test_control_chars_not_echoed(tmp_path, capsys):
     # A hostile archive name embedding ESC must not reach the terminal.
     p = make_bad_zip(

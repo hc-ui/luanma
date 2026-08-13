@@ -16,7 +16,7 @@ from .ziputil import (
     preview_zip,
 )
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 __all__ = [
     "ArchiveError",

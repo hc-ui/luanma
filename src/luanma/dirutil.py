@@ -22,16 +22,14 @@ from typing import List, Optional, Tuple
 
 from .detect import (
     CONFIDENCE_LABELS,
+    MIN_NAME_SCORE,
     DetectionResult,
     _score_text,
+    cp437_roundtrip,
     detect_names,
 )
 from .sanitize import sanitize_component
 from .ziputil import ArchiveError, _fs_path, _unique_path
-
-#: Decoded names scoring below this are left untouched: not enough
-#: evidence they are CJK text rather than accented Latin file names.
-_MIN_NAME_SCORE = 1.0
 
 
 @dataclass
@@ -61,6 +59,7 @@ class DirReport:
     renamed: int = 0
     skipped_unsure: int = 0  # cp437-encodable but not plausibly CJK
     errors: List[str] = field(default_factory=list)
+    new_root: Optional[str] = None  # set when the root itself was renamed
 
     @property
     def needs_fix(self) -> bool:
@@ -79,22 +78,8 @@ class DirReport:
             "renamed": self.renamed,
             "skipped_unsure": self.skipped_unsure,
             "errors": self.errors,
+            "new_root": self.new_root,
         }
-
-
-def _candidate_raw(name: str) -> Optional[bytes]:
-    """Return the original name bytes if *name* looks like cp437 mojibake.
-
-    Names with characters outside cp437 (real CJK, etc.) or pure-ASCII
-    names return None: they are not mojibake.
-    """
-    try:
-        raw = name.encode("cp437")
-    except UnicodeEncodeError:
-        return None
-    if all(b < 0x80 for b in raw):
-        return None
-    return raw
 
 
 def _walk_entries(root: Path) -> List[Tuple[Path, str, bool]]:
@@ -124,15 +109,21 @@ def scan_dir(
     candidates = [
         (base, name, is_dir, raw)
         for base, name, is_dir in entries
-        if (raw := _candidate_raw(name)) is not None
+        if (raw := cp437_roundtrip(name)) is not None
     ]
+    # The root's own name may be mojibake too; it informs detection and,
+    # if fixable, is renamed last (after everything inside it).
+    root_raw = cp437_roundtrip(root.name)
+    det_input = [raw for *_, raw in candidates]
+    if root_raw is not None:
+        det_input.append(root_raw)
 
     if encoding is not None:
         "".encode(encoding)  # validate early
-        det = DetectionResult(encoding, "forced", bool(candidates))
+        det = DetectionResult(encoding, "forced", bool(det_input))
         enc = encoding
     else:
-        det = detect_names([raw for *_, raw in candidates])
+        det = detect_names(det_input)
         enc = det.encoding if det.needs_fix else None
 
     report = DirReport(
@@ -144,7 +135,7 @@ def scan_dir(
     taken: dict = {}  # parent dir -> casefolded names already claimed
     for base, name, is_dir, raw in candidates:
         decoded = raw.decode(enc, errors="replace")
-        if _score_text(decoded, enc) < _MIN_NAME_SCORE:
+        if _score_text(decoded, enc) < MIN_NAME_SCORE:
             report.skipped_unsure += 1
             continue
         new_name, _ = sanitize_component(decoded)
@@ -159,6 +150,23 @@ def scan_dir(
                 is_dir=is_dir,
             )
         )
+
+    if root_raw is not None:
+        decoded = root_raw.decode(enc, errors="replace")
+        if _score_text(decoded, enc) >= MIN_NAME_SCORE:
+            new_name, _ = sanitize_component(decoded)
+            if new_name != root.name:
+                new_name = _claim_name(root.parent, new_name, taken)
+                report.planned.append(
+                    RenameItem(
+                        path=str(root),
+                        old_name=root.name,
+                        new_name=new_name,
+                        is_dir=True,
+                    )
+                )
+        else:
+            report.skipped_unsure += 1
     return det, report
 
 
@@ -200,5 +208,7 @@ def rename_dir(
             report.errors.append(f"{item.old_name}: {exc}")
             continue
         item.new_name = target.name
+        if item.path == report.root:
+            report.new_root = str(target)
         report.renamed += 1
     return report

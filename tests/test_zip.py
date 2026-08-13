@@ -1,9 +1,11 @@
 import zipfile
 
-from luanma import convert_zip, extract_zip, preview_zip
-from luanma.ziputil import UTF8_FLAG
+import pytest
 
-from helpers import make_bad_zip, make_encrypted_zip, make_utf8_zip
+from luanma import convert_zip, extract_zip, preview_zip
+from luanma.ziputil import ArchiveError, UTF8_FLAG
+
+from helpers import make_bad_zip, make_encrypted_zip, make_utf8_zip, mojibake
 
 GBK_NAMES = {
     "期末大作业/": b"",
@@ -253,3 +255,98 @@ def test_not_a_zip_raises(tmp_path):
 
     with pytest.raises(ArchiveError):
         preview_zip(bad)
+
+
+def test_double_mojibake_rezipped_archive(tmp_path):
+    # A wrecked tree re-zipped with a modern tool: names carry the UTF-8
+    # flag, but the text is the cp437 view of the original GBK bytes.
+    names = {
+        mojibake("期末大作业") + "/": b"",
+        mojibake("期末大作业") + "/" + mojibake("实验报告.docx"): b"doc",
+        mojibake("数据分析.xlsx"): b"xls",
+    }
+    p = make_utf8_zip(tmp_path / "re.zip", names)
+    det, previews = preview_zip(p)
+    assert det.needs_fix
+    assert det.encoding == "gb18030"
+    assert "期末大作业/实验报告.docx" in {pv.fixed for pv in previews}
+
+    report = extract_zip(p, dest=tmp_path / "out")
+    assert report.extracted == 2
+    target = tmp_path / "out" / "期末大作业" / "实验报告.docx"
+    assert target.read_bytes() == b"doc"
+
+
+def test_double_mojibake_spares_real_names(tmp_path):
+    # Correct CJK/ASCII names in the same re-zipped archive stay intact.
+    names = {
+        mojibake("课程设计说明.txt"): b"a",
+        mojibake("实验数据汇总.xlsx"): b"b",
+        "总结.docx": b"keep",
+        "notes.txt": b"ascii",
+    }
+    p = make_utf8_zip(tmp_path / "re.zip", names)
+    det, previews = preview_zip(p)
+    assert det.encoding == "gb18030"
+    m = {pv.original: pv.fixed for pv in previews}
+    assert m["总结.docx"] == "总结.docx"
+    assert m["notes.txt"] == "notes.txt"
+    assert m[mojibake("课程设计说明.txt")] == "课程设计说明.txt"
+
+
+def test_latin_flagged_names_never_reinterpreted(tmp_path):
+    # Accented-Latin names are cp437-encodable but must never be touched.
+    p = make_utf8_zip(
+        tmp_path / "fr.zip",
+        {"café.txt": b"a", "Müller Bericht.pdf": b"b"},
+    )
+    det, previews = preview_zip(p)
+    assert not det.needs_fix
+    assert all(not pv.needs_fix for pv in previews)
+
+
+def test_unflagged_archive_beats_flagged_candidates(tmp_path):
+    # When unflagged mojibake exists, flagged names are left alone even if
+    # they might look like mojibake (status quo, one encoding per archive).
+    p = make_bad_zip(
+        tmp_path / "mix.zip",
+        {"课程设计说明.txt": b"a"},
+        "gbk",
+        flagged_names={"正常中文名.txt": b"b"},
+    )
+    det, previews = preview_zip(p)
+    assert det.encoding == "gb18030"
+    m = {pv.original: pv.fixed for pv in previews}
+    assert m["正常中文名.txt"] == "正常中文名.txt"
+
+
+def test_preview_marks_encrypted_entries(tmp_path):
+    p = make_encrypted_zip(
+        tmp_path / "enc.zip", "机密资料.txt", b"secret", "pw"
+    )
+    det, previews = preview_zip(p)
+    assert any(pv.encrypted for pv in previews)
+    assert all("encrypted" in pv.to_dict() for pv in previews)
+
+
+def test_convert_leaves_no_part_file(tmp_path):
+    p = make_bad_zip(tmp_path / "gbk.zip", GBK_NAMES, "gbk")
+    out = tmp_path / "fixed.zip"
+    convert_zip(p, output=out)
+    assert out.exists()
+    assert not out.with_name(out.name + ".part").exists()
+
+
+def test_convert_output_dir_missing_raises(tmp_path):
+    p = make_bad_zip(tmp_path / "gbk.zip", GBK_NAMES, "gbk")
+    with pytest.raises(ArchiveError):
+        convert_zip(p, output=tmp_path / "no_such_dir" / "out.zip")
+    assert not (tmp_path / "no_such_dir").exists()
+
+
+def test_extract_dest_under_file_raises(tmp_path):
+    p = make_bad_zip(tmp_path / "gbk.zip", GBK_NAMES, "gbk")
+    blocker = tmp_path / "blocker"
+    blocker.write_bytes(b"i am a file")
+    with pytest.raises(ArchiveError):
+        extract_zip(p, dest=blocker / "sub")

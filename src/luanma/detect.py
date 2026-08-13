@@ -23,10 +23,18 @@ from typing import Dict, List, Optional, Sequence
 
 #: Candidate encodings, also the tie-break preference order. GB18030 is a
 #: strict superset of GBK/GB2312, so it decodes everything GBK archives
-#: contain plus rarer characters that plain GBK would reject.
-CANDIDATES = ("utf-8", "gb18030", "cp932", "big5", "cp949")
+#: contain plus rarer characters that plain GBK would reject. EUC-JP covers
+#: archives from older Japanese Unix systems (Shift-JIS covers Windows).
+CANDIDATES = ("utf-8", "gb18030", "cp932", "euc-jp", "big5", "cp949")
 
 _PREFERENCE = {enc: i for i, enc in enumerate(CANDIDATES)}
+
+#: Encodings whose text legitimately contains kana.
+_JP_ENCODINGS = ("cp932", "euc-jp", "utf-8")
+
+#: Decoded names scoring below this are not plausibly CJK text; used as a
+#: per-name guard before renaming anything that *might* be mojibake.
+MIN_NAME_SCORE = 1.0
 
 #: Human-readable confidence labels shared by all report types.
 CONFIDENCE_LABELS = {
@@ -94,14 +102,17 @@ def _score_text(text: str, encoding: str) -> float:
             score += 3.0
         elif 0x4E00 <= o <= 0x9FFF or 0x3400 <= o <= 0x4DBF:
             score += 0.5  # CJK ideograph (incl. Ext-A), not a common one
-        elif 0x3040 <= o <= 0x30FF:  # kana: strong signal by itself
-            score += 2.0
+        elif 0x3040 <= o <= 0x30FF:
+            # kana: strong for Japanese encodings; weaker elsewhere (GB2312
+            # and KS X 1001 do contain kana rows, but CJK file names almost
+            # never use them, so a kana-heavy decode should prefer JP)
+            score += 2.0 if encoding in _JP_ENCODINGS else 0.5
         elif 0xAC00 <= o <= 0xD7A3:  # hangul, but not a common syllable
             score += 0.5
         elif 0x3000 <= o <= 0x303F:  # CJK punctuation
             score += 0.5
         elif 0xFF61 <= o <= 0xFF9F:  # halfwidth katakana: mojibake look
-            score += 0.2 if encoding == "cp932" else -1.0
+            score += 0.2 if encoding in ("cp932", "euc-jp") else -1.0
         elif 0xFF00 <= o <= 0xFFEF:  # other fullwidth forms
             score += 0.3
         elif o < 0x80:
@@ -112,6 +123,23 @@ def _score_text(text: str, encoding: str) -> float:
             score -= 2.0
         # anything else (Latin ext, Greek, Cyrillic, ...) scores 0
     return score
+
+
+def cp437_roundtrip(name: str) -> Optional[bytes]:
+    """Original bytes if *name* could be CP437-mojibake text, else None.
+
+    CP437 maps every byte, so a name that went through the cp437 fallback
+    re-encodes losslessly to the original bytes. Pure-ASCII names and names
+    containing characters outside CP437 (real CJK, etc.) return None: they
+    are not mojibake.
+    """
+    try:
+        raw = name.encode("cp437")
+    except UnicodeEncodeError:
+        return None
+    if all(b < 0x80 for b in raw):
+        return None
+    return raw
 
 
 @dataclass

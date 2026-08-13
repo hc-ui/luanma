@@ -117,6 +117,45 @@ def test_missing_dir_raises(tmp_path):
         scan_dir(tmp_path / "不存在")
 
 
+def test_root_itself_renamed(tmp_path):
+    wreck = tmp_path / mojibake("学习资料")
+    wreck.mkdir()
+    (wreck / mojibake("课堂笔记.txt")).write_bytes(b"n")
+    report = rename_dir(wreck, apply=True)
+    assert report.renamed == 2
+    assert report.new_root == str(tmp_path / "学习资料")
+    assert (tmp_path / "学习资料" / "课堂笔记.txt").read_bytes() == b"n"
+    assert not wreck.exists()
+
+
+def test_root_rename_planned_last(tmp_path):
+    wreck = tmp_path / mojibake("学习资料")
+    wreck.mkdir()
+    (wreck / mojibake("课堂笔记.txt")).write_bytes(b"n")
+    report = rename_dir(wreck)  # preview
+    assert report.planned[-1].old_name == mojibake("学习资料")
+    assert report.new_root is None
+    assert wreck.exists()  # dry run
+
+
+def test_root_only_no_contents(tmp_path):
+    wreck = tmp_path / mojibake("照片备份")
+    wreck.mkdir()
+    report = rename_dir(wreck, apply=True)
+    assert report.renamed == 1
+    assert (tmp_path / "照片备份").is_dir()
+
+
+def test_clean_root_untouched(tmp_path):
+    wreck = tmp_path / "普通目录"
+    wreck.mkdir()
+    (wreck / mojibake("数据.txt")).write_bytes(b"d")
+    report = rename_dir(wreck, apply=True)
+    assert report.new_root is None
+    assert wreck.is_dir()
+    assert (wreck / "数据.txt").exists()
+
+
 def test_big5_tree(tmp_path):
     # Note: some Big5 mojibake contains Windows-illegal chars (e.g. 會議記錄
     # yields a "|") and cannot even exist on NTFS; use clean samples here.

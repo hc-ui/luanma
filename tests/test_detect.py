@@ -1,7 +1,7 @@
 from luanma import detect_zip
-from luanma.detect import detect_names
+from luanma.detect import cp437_roundtrip, detect_names
 
-from helpers import make_bad_zip, make_utf8_zip
+from helpers import make_bad_zip, make_utf8_zip, mojibake
 
 GBK_NAMES = {
     "期末大作业/": b"",
@@ -65,6 +65,18 @@ def test_detect_euc_kr(tmp_path):
     assert det.encoding == "cp949"
 
 
+def test_detect_euc_jp(tmp_path):
+    # Archives from older Japanese Unix systems use EUC-JP, not Shift-JIS.
+    p = make_bad_zip(
+        tmp_path / "eucjp.zip",
+        {"実験データ.csv": b"data", "報告書まとめ.txt": b"doc"},
+        "euc-jp",
+    )
+    det = detect_zip(p)
+    assert det.needs_fix
+    assert det.encoding == "euc-jp"
+
+
 def test_detect_unflagged_utf8(tmp_path):
     # Some tools write UTF-8 bytes but forget flag bit 11.
     p = make_bad_zip(
@@ -111,3 +123,26 @@ def test_ranked_orders_by_score(tmp_path):
     p = make_bad_zip(tmp_path / "gbk2.zip", GBK_NAMES, "gbk")
     det = detect_zip(p)
     assert det.ranked()[0] == "gb18030"
+
+
+def test_cp437_roundtrip():
+    assert cp437_roundtrip("readme.txt") is None  # pure ASCII
+    assert cp437_roundtrip("正常中文.txt") is None  # not cp437-encodable
+    raw = cp437_roundtrip(mojibake("期末.txt"))
+    assert raw == "期末.txt".encode("gbk")
+
+
+def test_rezipped_double_mojibake_detected(tmp_path):
+    # Mojibake names re-zipped with a modern tool: flagged UTF-8, but the
+    # text itself is the cp437 view of GBK bytes.
+    p = make_utf8_zip(
+        tmp_path / "re.zip",
+        {
+            mojibake("期末大作业.docx"): b"a",
+            mojibake("数据分析结果.xlsx"): b"b",
+        },
+    )
+    det = detect_zip(p)
+    assert det.needs_fix
+    assert det.encoding == "gb18030"
+    assert det.confidence == "high"
