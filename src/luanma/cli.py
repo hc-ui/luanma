@@ -158,7 +158,7 @@ def _run_dir(path: str, args) -> dict:
             "已跳过; 可用 -e 指定编码后重试)"
         )
     for err in report.errors:
-        print(f"  警告: {err}")
+        print(f"  警告: {_display(err)}")
     if report.planned and not args.rename:
         print("提示: 确认无误后加 --rename 实际重命名")
     return entry
