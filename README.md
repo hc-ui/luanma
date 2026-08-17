@@ -1,5 +1,7 @@
 # luanma(乱码)
 
+> **简体中文** | [English](#features-english)
+
 [![CI](https://github.com/hc-ui/luanma/actions/workflows/ci.yml/badge.svg)](https://github.com/hc-ui/luanma/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
@@ -9,14 +11,14 @@ Fix mojibake filenames in zip archives — and in directories that were already 
 
 ```text
 之前:                          之后:
-ÆÚÄ©´ó×÷Òµ/                    期末大作业/
+ÆÚÄ©´ó×òÒµ/                    期末大作业/
   ╔ÁÑ╬▒¿copy.docx               实验报告-最终版.docx
   ╩²¥¦ÂÍ╬÷.xlsx                 数据分析.xlsx
 ```
 
 ## 为什么会乱码
 
-zip 格式诞生时没有规定文件名必须用什么编码。中文 Windows 上老工具(以及百度网盘、部分邮箱、旧版 WinRAR、Java 程序等)打包时,把文件名按 **GBK 字节**写进压缩包,而且不设置"这是 UTF-8"的标志位(bit 11)。解压工具读到这些字节,只能按 zip 规范的历史默认编码 **CP437** 去猜——于是 `期末大作业` 变成 `ÆÚÄ©´ó×÷Òµ`。
+zip 格式诞生时没有规定文件名必须用什么编码。中文 Windows 上老工具(以及百度网盘、部分邮箱、旧版 WinRAR、Java 程序等)打包时,把文件名按 **GBK 字节**写进压缩包,而且不设置"这是 UTF-8"的标志位(bit 11)。解压工具读到这些字节,只能按 zip 规范的历史默认编码 **CP437** 去猜——于是 `期末大作业` 变成 `ÆÚÄ©´ó×òÒµ`。
 
 反过来,macOS/Linux 打包的 UTF-8 压缩包在一些旧版 Windows 工具里解出来也是乱码。跨系统、跨语言(日文游戏 MOD、繁中资源、韩文资料)时更是重灾区。
 
@@ -71,7 +73,7 @@ luanma *.zip --json
 
 ```text
 bad.zip: 检测到文件名编码 GB18030(置信度: 高)
-  ÆÚÄ©´ó×÷Òµ/╔ÁÑ╬▒¿.docx
+  ÆÚÄ©´ó×òÒµ/╔ÁÑ╬▒¿.docx
     -> 期末大作业/实验报告.docx
   (另有 2 个系统垃圾文件将被跳过, --keep-junk 可保留)
 提示: 加 -x 按此编码解压, 或加 --fix 生成 UTF-8 压缩包
@@ -94,7 +96,7 @@ report = rename_dir("乱码目录/", apply=True)   # 修复已解压的目录
 
 对每个未标 UTF-8 flag 的文件名,取出原始字节,分别用候选编码(UTF-8、GB18030(GBK 超集)、Shift-JIS、EUC-JP、Big5、EUC-KR)试解码,再给解码结果打分:
 
-- 命中**高频汉字表**(简体+繁体,约 900 字)或**高频韩文音节表**得高分——错误的编码解出来的多是生僻字,得分很低
+- 命中**高频汉字表**(简体+繁体,约 900 字)或**高频韩文音节表**得高分——错误的编码解出来的多是生僵字,得分很低
 - 假名是 Shift-JIS 的强信号;半角片假名(`ｱｲｳ` 这种经典乱码形态)在非日文编码下扣分
 - 解码失败、控制字符、私用区字符、替换符 `�`、制表符画线(`╔╩╦`)重罚
 
@@ -132,9 +134,12 @@ report = rename_dir("乱码目录/", apply=True)   # 修复已解压的目录
 - 不支持 rar/7z(这两种格式自带 Unicode 文件名,本身较少出这个问题);tar/tar.gz 支持在路线图中。
 - 只修文件名,不改文件内容——文件内容的乱码是另一个问题。
 
-## 姊妹项目
+## 姆妹项目
 
-- [gbt7714-lint](https://github.com/hc-ui/gbt7714-lint) — GB/T 7714—2025 参考文献格式检查与自动修复工具
+- [eoldoctor](https://github.com/hc-ui/eoldoctor) — Git 换行符医生，一键治好 CRLF/LF
+- [whoseport](https://github.com/hc-ui/whoseport) — 一条命令查出端口被谁占用并释放
+- [gbt7714-lint](https://github.com/hc-ui/gbt7714-lint) — GB/T 7714—2025 参考文献格式检查与自动修复
+- [kebiao2ics](https://github.com/hc-ui/kebiao2ics) — 大学课表转手机日历 .ics
 
 ## 贡献
 
