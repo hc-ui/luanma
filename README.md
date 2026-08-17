@@ -38,7 +38,7 @@ zip 格式诞生时没有规定文件名必须用什么编码。中文 Windows �
 pip install git+https://github.com/hc-ui/luanma.git
 ```
 
-零第三方依赖,Python 3.9+,Windows / macOS / Linux 通用。（PyPI 包名 `luanma` 上架中，上架后可直接 `pip install luanma`。）
+零第三方依赖，Python 3.9+。尚未上 PyPI。
 
 ## 使用
 
